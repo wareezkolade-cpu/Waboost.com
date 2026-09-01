@@ -1,0 +1,552 @@
+<script>
+/* =========================================================
+   WAREEZ SMART AI ASSISTANT V2
+   Local intelligent assistant - no API key required
+========================================================= */
+
+function money(n){
+  return '₦' + Number(n || 0).toLocaleString('en-NG');
+}
+
+function normalizeText(text){
+  return text
+    .toLowerCase()
+    .replace(/,/g,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function detectPlatform(text){
+  const t = normalizeText(text);
+
+  if(/\b(tiktok|tik tok|tt)\b/.test(t)) return 'tiktok';
+  if(/\b(instagram|insta|ig)\b/.test(t)) return 'instagram';
+  if(/\b(telegram|tg)\b/.test(t)) return 'telegram';
+  if(/\b(facebook|fb)\b/.test(t)) return 'facebook';
+  if(/\b(youtube|yt)\b/.test(t)) return 'youtube';
+  if(/\b(whatsapp|wa)\b/.test(t)) return 'whatsapp';
+
+  return null;
+}
+
+function detectService(text){
+  const t = normalizeText(text);
+
+  if(/\b(follower|followers|follow)\b/.test(t))
+    return 'followers';
+
+  if(/\b(like|likes)\b/.test(t) && !/\blive\b/.test(t))
+    return 'likes';
+
+  if(/\b(view|views|viewers)\b/.test(t) && !/\blive\b/.test(t))
+    return 'views';
+
+  if(/\b(repost|reposts|share|shares)\b/.test(t))
+    return 'reposts';
+
+  if(/\b(reaction|reactions)\b/.test(t))
+    return 'reactions';
+
+  if(/\b(live|livestream|live stream)\b/.test(t))
+    return 'livestream';
+
+  if(/\b(member|members|page follower|page followers|channel members)\b/.test(t))
+    return 'page_followers';
+
+  return null;
+}
+
+function detectQuantity(text){
+  const t = normalizeText(text);
+
+  let match;
+
+  // 5k, 10k, 2.5k
+  match = t.match(/\b(\d+(?:\.\d+)?)\s*k\b/);
+  if(match){
+    return Math.round(parseFloat(match[1]) * 1000);
+  }
+
+  // 5 thousand
+  match = t.match(/\b(\d+(?:\.\d+)?)\s*(?:thousand|kilo)\b/);
+  if(match){
+    return Math.round(parseFloat(match[1]) * 1000);
+  }
+
+  // 2 million
+  match = t.match(/\b(\d+(?:\.\d+)?)\s*m(?:illion)?\b/);
+  if(match){
+    return Math.round(parseFloat(match[1]) * 1000000);
+  }
+
+  // Plain number
+  match = t.match(/\b\d{2,9}\b/);
+  if(match){
+    return parseInt(match[0],10);
+  }
+
+  return null;
+}
+
+function detectLink(text){
+  const match = text.match(
+    /https?:\/\/[^\s]+|www\.[^\s]+|(?:instagram|tiktok|facebook|youtube|t)\.com\/[^\s]+/i
+  );
+
+  return match ? match[0].replace(/[.,!?]+$/,'') : null;
+}
+
+function detectWhatsApp(text){
+  const match = text.match(
+    /(?:\+234|234|0)\d{9,10}/
+  );
+
+  return match ? match[0] : null;
+}
+
+function findBestType(platform, service, text){
+  const t = normalizeText(text);
+
+  let candidates = allTypes.filter(x =>
+    x.platform === platform &&
+    x.service === service
+  );
+
+  if(!candidates.length){
+    candidates = allTypes.filter(x => x.platform === platform);
+  }
+
+  // Special cases
+  if(platform === 'instagram' &&
+     service === 'views' &&
+     /\bstory\b/.test(t)){
+    const story = candidates.find(x =>
+      x.label.toLowerCase().includes('story')
+    );
+    if(story) return story;
+  }
+
+  if(platform === 'tiktok' &&
+     service === 'livestream' &&
+     /\bviewer|viewers\b/.test(t)){
+    const viewers = candidates.find(x =>
+      x.label.toLowerCase().includes('viewer')
+    );
+    if(viewers) return viewers;
+  }
+
+  return candidates[0] || null;
+}
+
+function selectServiceSmart(platform, service, text){
+  if(platform){
+    pickSocial(platform);
+  }
+
+  if(service){
+    const serviceSelect = document.getElementById('service');
+
+    if([...serviceSelect.options].some(o => o.value === service)){
+      serviceSelect.value = service;
+      updateServices();
+    }
+  }
+
+  const type = findBestType(platform || currentPlatform, service || document.getElementById('service').value, text);
+
+  if(type){
+    const typeSelect = document.getElementById('type');
+
+    const option = [...typeSelect.options].find(
+      o => parseFloat(o.value) === parseFloat(type.value)
+    );
+
+    if(option){
+      typeSelect.value = option.value;
+      updatePrice();
+    }
+  }
+}
+
+function validateQuantity(){
+  const quantityInput = document.getElementById('quantity');
+  const type = document.getElementById('type').selectedOptions[0];
+
+  if(!type) return null;
+
+  const qty = parseInt(quantityInput.value || 0);
+  const min = parseInt(type.dataset.min || 0);
+  const max = parseInt(type.dataset.max || 999999999);
+
+  if(!qty) return null;
+
+  if(qty < min){
+    return `⚠️ Quantity is too low. Minimum is ${min.toLocaleString()}.`;
+  }
+
+  if(qty > max){
+    return `⚠️ Quantity is too high. Maximum is ${max.toLocaleString()}.`;
+  }
+
+  return `✅ Quantity ${qty.toLocaleString()} is valid.`;
+}
+
+function executeAICommands(userText){
+
+  const t = normalizeText(userText);
+  const actions = [];
+
+  const platform = detectPlatform(userText);
+  const service = detectService(userText);
+  const quantity = detectQuantity(userText);
+  const link = detectLink(userText);
+  const wa = detectWhatsApp(userText);
+
+  /* Platform */
+  if(platform){
+    pickSocial(platform);
+    actions.push(`Selected ${platform.toUpperCase()}`);
+  }
+
+  /* Service */
+  if(service){
+    const serviceSelect = document.getElementById('service');
+
+    if([...serviceSelect.options].some(o => o.value === service)){
+      serviceSelect.value = service;
+      updateServices();
+      actions.push(`Selected ${service.replace('_',' ')}`);
+    }
+  }
+
+  /* Better type selection */
+  if(platform || service){
+    selectServiceSmart(
+      platform || currentPlatform,
+      service || document.getElementById('service').value,
+      userText
+    );
+  }
+
+  /* Quantity */
+  if(quantity){
+    document.getElementById('quantity').value = quantity;
+    updatePrice();
+
+    const validation = validateQuantity();
+
+    if(validation){
+      actions.push(validation);
+    }else{
+      actions.push(`Set quantity to ${quantity.toLocaleString()}`);
+    }
+  }
+
+  /* Link */
+  if(link){
+    document.getElementById('accountLink').value = link;
+    actions.push('Added the link');
+  }
+
+  /* WhatsApp */
+  if(wa){
+    document.getElementById('custWa').value = wa;
+    actions.push('Added the WhatsApp number');
+  }
+
+  /* Calculate */
+  if(/\b(calculate|calculate price|how much|price for|cost for)\b/.test(t)){
+    const price = updatePrice();
+    actions.push(`Calculated price: ${money(price)}`);
+  }
+
+  return actions;
+}
+
+function getCurrentOrderInfo(){
+
+  const type = document.getElementById('type').selectedOptions[0];
+
+  return {
+    platform: currentPlatform,
+    service: document.getElementById('service').value,
+    type: type ? type.text : '',
+    quantity: parseInt(document.getElementById('quantity').value || 0),
+    price: updatePrice(),
+    link: document.getElementById('accountLink').value.trim(),
+    whatsapp: document.getElementById('custWa').value.trim()
+  };
+}
+
+function getAgenticAIResponse(userText){
+
+  const original = userText;
+  const t = normalizeText(userText);
+
+  const actions = executeAICommands(userText);
+  const info = getCurrentOrderInfo();
+
+  let answer = '';
+
+  /* Greetings */
+  if(/^(hi|hello|hey|yo|good morning|good afternoon|good evening)\b/.test(t)){
+
+    answer =
+      `👋 <b>Hi! I'm Wareez AI 👑</b><br><br>` +
+      `I can help you choose a service, calculate prices, fill your order details and explain payment.<br><br>` +
+      `Try:<br>` +
+      `• "TikTok 5k followers"<br>` +
+      `• "Instagram 2k likes"<br>` +
+      `• "How much is 10k TikTok views?"<br>` +
+      `• "Set my WhatsApp to 08012345678"`;
+  }
+
+  /* Help */
+  else if(
+    t.includes('help') ||
+    t.includes('what can you do') ||
+    t.includes('how do you work')
+  ){
+
+    answer =
+      `🤖 <b>Here's what I can do:</b><br><br>` +
+      `📱 Select Instagram, TikTok, Telegram or Facebook<br>` +
+      `📦 Choose Followers, Likes, Views, Reposts, Reactions or Live<br>` +
+      `🔢 Set quantities like 1k, 5k or 10000<br>` +
+      `💰 Calculate your price<br>` +
+      `🔗 Fill your social-media link<br>` +
+      `📞 Fill your WhatsApp number<br>` +
+      `🏦 Explain payment<br><br>` +
+      `Just tell me what you want naturally.`;
+  }
+
+  /* Prices */
+  else if(
+    /\b(price|prices|cost|rate|rates|how much)\b/.test(t)
+  ){
+
+    const prices = allTypes
+      .filter(x => x.platform === (platformForPrice(t) || currentPlatform))
+      .slice(0,8);
+
+    if(prices.length){
+
+      answer = `💰 <b>Available ${(
+        platformForPrice(t) || currentPlatform
+      ).toUpperCase()} services:</b><br><br>`;
+
+      prices.forEach(x=>{
+        answer += `• ${x.label}: <b>${x.priceLabel}</b><br>`;
+      });
+
+    }else{
+      answer =
+        `💰 Current service prices are loaded from the Wareez price list.<br><br>` +
+        `Tell me something specific like <b>"5k TikTok followers"</b> and I'll calculate it.`;
+    }
+  }
+
+  /* Payment */
+  else if(
+    /\b(pay|payment|paying|bank|kuda|transfer|account number)\b/.test(t)
+  ){
+
+    answer =
+      `🏦 <b>Payment Information</b><br><br>` +
+      `Bank: <b>Kuda Bank</b><br>` +
+      `Account Number: <b>3003350273</b><br>` +
+      `Account Name: <b>Yusuf Olywatoyin</b><br><br>` +
+      `After payment, make sure your order details are correct and use the WhatsApp notification button.`;
+  }
+
+  /* Growth */
+  else if(
+    /\b(grow|growth|increase|viral|engagement|followers organically)\b/.test(t)
+  ){
+
+    answer =
+      `📈 <b>Social Growth Tips</b><br><br>` +
+      `1️⃣ Post consistently<br>` +
+      `2️⃣ Make the first few seconds interesting<br>` +
+      `3️⃣ Use relevant captions and hashtags<br>` +
+      `4️⃣ Reply to comments<br>` +
+      `5️⃣ Study which posts perform best<br>` +
+      `6️⃣ Focus on useful or entertaining content<br><br>` +
+      `💡 Don't rely only on numbers—real engagement comes from people who actually enjoy your content.`;
+  }
+
+  /* Current order */
+  else if(
+    /\b(my order|order details|what did i select|what have i selected|show order)\b/.test(t)
+  ){
+
+    answer =
+      `📋 <b>Your Current Order</b><br><br>` +
+      `📱 Platform: ${info.platform.toUpperCase()}<br>` +
+      `📦 Service: ${info.service}<br>` +
+      `🔢 Quantity: ${info.quantity ? info.quantity.toLocaleString() : 'Not set'}<br>` +
+      `💰 Price: ${money(info.price)}<br>` +
+      `🔗 Link: ${info.link || 'Not set'}<br>` +
+      `📞 WhatsApp: ${info.whatsapp || 'Not set'}`;
+  }
+
+  /* Clear */
+  else if(
+    /\b(clear|reset|start over|new order)\b/.test(t)
+  ){
+
+    document.getElementById('quantity').value = '';
+    document.getElementById('accountLink').value = '';
+    document.getElementById('custWa').value = '';
+
+    updatePrice();
+
+    answer =
+      `🧹 <b>Order form cleared.</b><br><br>` +
+      `You can start a new order now.`;
+  }
+
+  /* Place order */
+  else if(
+    /\b(place order|submit order|boost now|finish order|complete order)\b/.test(t)
+  ){
+
+    const missing = [];
+
+    if(!info.link) missing.push('🔗 social-media link');
+    if(!info.quantity) missing.push('🔢 quantity');
+    if(!info.whatsapp) missing.push('📞 WhatsApp number');
+
+    const validation = validateQuantity();
+
+    if(validation && validation.startsWith('⚠️')){
+      answer = validation;
+    }
+    else if(missing.length){
+
+      answer =
+        `⚠️ <b>Your order is not ready yet.</b><br><br>` +
+        `Please provide:<br>` +
+        missing.map(x => `• ${x}`).join('<br>') +
+        `<br><br>` +
+        `You can tell me everything in one message.`;
+    }
+    else{
+
+      answer =
+        `✅ <b>Your order details are ready.</b><br><br>` +
+        `📱 ${info.platform.toUpperCase()}<br>` +
+        `📦 ${info.service}<br>` +
+        `🔢 ${info.quantity.toLocaleString()}<br>` +
+        `💰 ${money(info.price)}<br><br>` +
+        `Tap <b>BOOST NOW - I HAVE PAID</b> to submit it.`;
+    }
+  }
+
+  /* Default smart response */
+  else{
+
+    const detected = [];
+
+    if(platform) detected.push(`platform: <b>${platform}</b>`);
+    if(service) detected.push(`service: <b>${service.replace('_',' ')}</b>`);
+    if(quantity) detected.push(`quantity: <b>${quantity.toLocaleString()}</b>`);
+
+    if(detected.length){
+
+      answer =
+        `🧠 I understood ${detected.join(', ')}.<br><br>` +
+        `💰 Current price: <b>${money(info.price)}</b><br><br>` +
+        `You can say <b>"show my order"</b> to review everything.`;
+
+    }else{
+
+      answer =
+        `🤔 I can help with that, but I need a little more information.<br><br>` +
+        `Try saying:<br>` +
+        `👉 <b>"TikTok 5k followers"</b><br>` +
+        `👉 <b>"Instagram 2k likes"</b><br>` +
+        `👉 <b>"How much is 10k views?"</b><br>` +
+        `👉 <b>"How do I pay?"</b>`;
+    }
+  }
+
+  if(actions.length){
+
+    answer =
+      `⚡ <b>DONE:</b><br>` +
+      actions.map(x => `• ${x}`).join('<br>') +
+      `<br><br>` +
+      answer;
+  }
+
+  return answer;
+}
+
+function platformForPrice(text){
+
+  const t = normalizeText(text);
+
+  if(/\b(tiktok|tik tok|tt)\b/.test(t)) return 'tiktok';
+  if(/\b(instagram|insta|ig)\b/.test(t)) return 'instagram';
+  if(/\b(telegram|tg)\b/.test(t)) return 'telegram';
+  if(/\b(facebook|fb)\b/.test(t)) return 'facebook';
+
+  return null;
+}
+
+function sendAIMessage(){
+
+  const input = document.getElementById('aiInput');
+  const text = input.value.trim();
+
+  if(!text) return;
+
+  const messages = document.getElementById('aiMessages');
+
+  const userDiv = document.createElement('div');
+  userDiv.className = 'msg msg-user';
+  userDiv.innerText = text;
+
+  messages.appendChild(userDiv);
+
+  input.value = '';
+
+  messages.scrollTop = messages.scrollHeight;
+
+  const typingDiv = document.createElement('div');
+  typingDiv.className = 'msg msg-ai';
+  typingDiv.id = 'typing';
+
+  typingDiv.innerHTML =
+    '🚀 <b>Wareez AI is thinking...</b> <i class="fas fa-spinner fa-spin"></i>';
+
+  messages.appendChild(typingDiv);
+
+  messages.scrollTop = messages.scrollHeight;
+
+  setTimeout(()=>{
+
+    const typing = document.getElementById('typing');
+    if(typing) typing.remove();
+
+    const aiDiv = document.createElement('div');
+    aiDiv.className = 'msg msg-ai';
+
+    try{
+      aiDiv.innerHTML = getAgenticAIResponse(text);
+    }catch(error){
+
+      console.error(error);
+
+      aiDiv.innerHTML =
+        `⚠️ Sorry, something went wrong. Please try your request again.`;
+    }
+
+    messages.appendChild(aiDiv);
+
+    messages.scrollTop = messages.scrollHeight;
+
+  }, 500);
+}
+</script>
